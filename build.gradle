@@ -3,7 +3,7 @@
 // SSE stream. No front end — the screen that renders this lives on the trading desk. Matching
 // and pricing are library dependencies (JitPack tags), not code that lives here.
 plugins {
-    id 'com.damianhoward.kotlin-conventions' version '0.5.4'
+    id 'com.damianhoward.kotlin-conventions' version '0.6.0'
     id 'application'
 }
 
@@ -15,13 +15,9 @@ application {
     mainClass = 'com.damianhoward.positionledger.MainKt'
 }
 
-repositories {
-    maven { url = uri('https://jitpack.io') } // orderbook + risk-engine build from their git tags
-}
-
 dependencies {
-    implementation 'com.github.damianhoward:orderbook:v3.0.1'
-    implementation 'com.github.damianhoward:risk-engine:v2.0.0'
+    implementation 'com.damianhoward:orderbook:3.0.2'
+    implementation 'com.damianhoward:risk-engine:2.0.1'
     implementation deps.kafka.clients
     implementation deps.flyway.core
     runtimeOnly deps.flyway.oracle
