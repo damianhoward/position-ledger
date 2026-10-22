@@ -4,6 +4,7 @@ import com.damianhoward.positionledger.capture.TradeCapture
 import com.damianhoward.positionledger.health.Readiness
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import org.slf4j.LoggerFactory
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
@@ -55,7 +56,7 @@ class LedgerServer(
         server.executor = executor
         server.createContext("/", ::route)
         server.start()
-        println("Position ledger listening on :$boundPort")
+        log.info("Position ledger listening on :{}", boundPort)
     }
 
     /** The port actually bound — differs from the requested one when 0 (ephemeral) was asked for. */
@@ -140,3 +141,5 @@ class LedgerServer(
         }
     }
 }
+
+private val log = LoggerFactory.getLogger(LedgerServer::class.java)

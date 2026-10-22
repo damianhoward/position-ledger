@@ -1,6 +1,9 @@
 package com.damianhoward.positionledger.pricing
 
+import com.damianhoward.positionledger.view.BookWire
+import com.damianhoward.positionledger.view.SymbolRiskWire
 import com.damianhoward.riskengine.report.RiskReport
+import kotlinx.serialization.json.Json
 import java.math.BigDecimal
 
 /** One symbol's validated single-underlier report, beside the open its day PnL measures from. */
@@ -39,14 +42,11 @@ data class BookRisk(
             }.takeIf { it.isNotEmpty() }
             ?.reduce(BigDecimal::add)
 
-    fun toJson(): String =
-        """{"valuation":${valuation.toPlainString()},"grossNotional":${grossNotional.toPlainString()},""" +
-            """"dayPnl":${dayPnl?.toPlainString() ?: "null"},""" +
-            """"symbols":[${symbols.joinToString(",", transform = ::symbolJson)}]}"""
-
-    private fun symbolJson(s: SymbolRisk): String =
-        """{"symbol":${quote(s.symbol)},"openPrice":${s.openPrice?.toPlainString() ?: "null"},""" +
-            """"report":${s.report.toJson()}}"""
-
-    private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    internal fun toWire(): BookWire =
+        BookWire(
+            valuation = valuation,
+            grossNotional = grossNotional,
+            dayPnl = dayPnl,
+            symbols = symbols.map { SymbolRiskWire(it.symbol, it.openPrice, Json.parseToJsonElement(it.report.toJson())) },
+        )
 }

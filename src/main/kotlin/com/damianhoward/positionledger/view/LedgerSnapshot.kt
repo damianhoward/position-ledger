@@ -4,6 +4,7 @@ import com.damianhoward.positionledger.consume.ConsumerProgress
 import com.damianhoward.positionledger.exposure.ExposureReport
 import com.damianhoward.positionledger.position.Position
 import com.damianhoward.positionledger.pricing.BookRisk
+import kotlinx.serialization.json.Json
 
 /**
  * Everything the desk renders, at one moment: the booked [positions], the [book] risk —
@@ -27,19 +28,22 @@ data class LedgerSnapshot(
     val coherent: Boolean get() = positionsProgress?.offset == exposure.progress?.offset
 
     fun toJson(): String =
-        """{"v":2,"positions":[${positions.joinToString(",", transform = ::positionJson)}],""" +
-            """"book":${book?.toJson() ?: "null"},""" +
-            """"exposure":${exposure.toJson()},""" +
-            """"sync":{"positions":${progressJson(positionsProgress)},"exposure":${progressJson(exposure.progress)},""" +
-            """"coherent":$coherent,"duplicatesDropped":$duplicates,"deadLetters":$deadLetters}}"""
-
-    private fun progressJson(p: ConsumerProgress?): String =
-        if (p == null) "null" else """{"offset":${p.offset},"fillTs":${p.fillTimeMillis}}"""
-
-    // Prices are exact JSON numbers via their plain-string form, matching RiskReport's convention.
-    private fun positionJson(position: Position): String =
-        """{"symbol":${quote(position.symbol)},"quantity":${position.quantity},""" +
-            """"lastPrice":${position.lastPrice.toPlainString()},"lastTimeMillis":${position.lastTimeMillis}}"""
-
-    private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        Json.encodeToString(
+            SnapshotWire(
+                v = 2,
+                positions = positions.map { PositionWire(it.symbol, it.quantity, it.lastPrice, it.lastTimeMillis) },
+                book = book?.toWire(),
+                exposure = exposure.toWire(),
+                sync =
+                    SyncWire(
+                        positions = positionsProgress?.toWire(),
+                        exposure = exposure.progress?.toWire(),
+                        coherent = coherent,
+                        duplicatesDropped = duplicates,
+                        deadLetters = deadLetters,
+                    ),
+            ),
+        )
 }
+
+internal fun ConsumerProgress.toWire(): ProgressWire = ProgressWire(offset, fillTimeMillis)

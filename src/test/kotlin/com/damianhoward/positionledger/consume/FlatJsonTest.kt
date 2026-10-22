@@ -22,6 +22,12 @@ class FlatJsonTest {
     }
 
     @Test
+    fun `understands every standard JSON escape, as the producer now writes them`() {
+        val json = FlatJson.parse("""{"a":"line\nbreak\ttab \u00e9"}""")
+        assertEquals("line\nbreak\ttab \u00e9", json.string("a"))
+    }
+
+    @Test
     fun `tolerates whitespace between tokens`() {
         val json = FlatJson.parse("""  { "a" : 1 , "b" : "x" }  """)
         assertEquals(1L, json.long("a"))
@@ -70,8 +76,9 @@ class FlatJsonTest {
             """{"a":true}""",
             """{"a":{"nested":1}}""",
             """{"a":1}trailing""",
-            """{"a":1,"a":2}""",
-            """{"a":"bad \n escape"}""", // raw string: a literal backslash-n, an unsupported escape
+            """{"a":null}""",
+            """{"a":1e3}""",
+            """{"a":"bad \q escape"}""", // raw string: backslash-q is not a JSON escape
             """{"a":"unterminated""",
             """{a:1}""",
         ).forEach { json ->

@@ -22,6 +22,7 @@ import com.damianhoward.positionledger.web.LedgerServer
 import com.damianhoward.positionledger.web.SseBroadcaster
 import com.damianhoward.riskengine.report.RiskReportAssembler
 import org.flywaydb.core.Flyway
+import org.slf4j.LoggerFactory
 import java.sql.DriverManager
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -45,9 +46,12 @@ fun main(args: Array<String>) {
 
     if (args.firstOrNull() == "replay-dlt") {
         val summary = DltReplay.create(config).use { it.run() }
-        println(
-            "replayed ${summary.replayed} record(s) to ${config.fillsTopic}; " +
-                "${summary.stillMalformed} still-malformed record(s) left on ${config.deadLetterTopic}",
+        log.info(
+            "Replayed {} record(s) to {}; {} still-malformed record(s) left on {}",
+            summary.replayed,
+            config.fillsTopic,
+            summary.stillMalformed,
+            config.deadLetterTopic,
         )
         return
     }
@@ -76,8 +80,7 @@ fun main(args: Array<String>) {
     detector.onChange { broadcaster.broadcast(capture.snapshot().toJson()) }
 
     val fatal: (Exception) -> Unit = { error ->
-        System.err.println("fill consumer failed:")
-        error.printStackTrace()
+        log.error("Fill consumer failed", error)
         exitProcess(1)
     }
     val consumer =
@@ -157,3 +160,5 @@ fun main(args: Array<String>) {
     consumer.start()
     exposureConsumer.start()
 }
+
+private val log = LoggerFactory.getLogger("com.damianhoward.positionledger.Main")
