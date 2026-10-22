@@ -1,0 +1,15 @@
+<!--
+  One appender to stdout, which systemd hands to journald; journald stamps every line with its own
+  time and unit, so the pattern carries neither. INFO keeps kafka-clients' DEBUG chatter out of a
+  journal on a 1 GB box. Without this file Logback's default would log everything at DEBUG.
+-->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%-5level [%thread] %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="INFO">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>

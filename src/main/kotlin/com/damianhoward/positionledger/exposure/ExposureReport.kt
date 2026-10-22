@@ -1,6 +1,11 @@
 package com.damianhoward.positionledger.exposure
 
 import com.damianhoward.positionledger.consume.ConsumerProgress
+import com.damianhoward.positionledger.view.BreachEventWire
+import com.damianhoward.positionledger.view.ExposureWire
+import com.damianhoward.positionledger.view.SymbolExposureWire
+import com.damianhoward.positionledger.view.toWire
+import kotlinx.serialization.json.Json
 import java.math.BigDecimal
 
 /** Which ceiling a breach event refers to. */
@@ -63,24 +68,27 @@ data class ExposureReport(
      */
     fun worstUtilisation(kind: LimitKind): BigDecimal? = symbols.map { it.utilisation(kind) }.maxOrNull()
 
-    fun toJson(): String =
-        """{"maxPosition":${limits.maxAbsPosition},"maxNotional":${limits.maxNotional.toPlainString()},""" +
-            """"symbols":[${symbols.joinToString(",", transform = ::symbolJson)}],""" +
-            """"events":[${events.joinToString(",", transform = ::eventJson)}],"malformed":$malformed,""" +
-            """"breaches":$breaches,""" +
-            """"progress":${progressJson(progress)}}"""
+    fun toJson(): String = Json.encodeToString(toWire())
 
-    private fun progressJson(p: ConsumerProgress?): String =
-        if (p == null) "null" else """{"offset":${p.offset},"fillTs":${p.fillTimeMillis}}"""
-
-    private fun symbolJson(s: SymbolExposure): String =
-        """{"symbol":${quote(s.symbol)},"netQuantity":${s.netQuantity},"lastPrice":${s.lastPrice.toPlainString()},""" +
-            """"notional":${s.notional.toPlainString()},"positionUtilisation":${s.positionUtilisation.toPlainString()},""" +
-            """"notionalUtilisation":${s.notionalUtilisation.toPlainString()},"breached":${s.breached}}"""
-
-    private fun eventJson(e: BreachEvent): String =
-        """{"symbol":${quote(e.symbol)},"kind":"${e.kind}","breached":${e.breached},""" +
-            """"value":${e.value.toPlainString()},"limit":${e.limit.toPlainString()},"ts":${e.timeMillis}}"""
-
-    private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    internal fun toWire(): ExposureWire =
+        ExposureWire(
+            maxPosition = limits.maxAbsPosition,
+            maxNotional = limits.maxNotional,
+            symbols =
+                symbols.map {
+                    SymbolExposureWire(
+                        it.symbol,
+                        it.netQuantity,
+                        it.lastPrice,
+                        it.notional,
+                        it.positionUtilisation,
+                        it.notionalUtilisation,
+                        it.breached,
+                    )
+                },
+            events = events.map { BreachEventWire(it.symbol, it.kind.toString(), it.breached, it.value, it.limit, it.timeMillis) },
+            malformed = malformed,
+            breaches = breaches,
+            progress = progress?.toWire(),
+        )
 }

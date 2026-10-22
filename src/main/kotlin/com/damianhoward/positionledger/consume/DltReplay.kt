@@ -11,6 +11,7 @@ import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kafka.common.serialization.StringSerializer
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.Properties
 import java.util.concurrent.TimeUnit
@@ -37,7 +38,7 @@ class DltReplay(
     private val fillsTopic: String,
     private val confirmTimeout: Duration = DEFAULT_CONFIRM_TIMEOUT,
     private val pollTimeout: Duration = Duration.ofMillis(500),
-    private val log: (String) -> Unit = ::println,
+    private val log: (String) -> Unit = { replayLog.info(it) },
 ) : AutoCloseable {
     /** What one run did: [replayed] records re-entered the stream, [stillMalformed] stayed dead. */
     data class Summary(
@@ -111,3 +112,5 @@ class DltReplay(
         }
     }
 }
+
+private val replayLog = LoggerFactory.getLogger(DltReplay::class.java)

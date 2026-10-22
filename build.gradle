@@ -1,11 +1,16 @@
 // The integration context: consumes orderbook's fill stream off Kafka, maintains positions in
 // the Autonomous DB, reprices them through risk-engine, and publishes the result as JSON and an
 // SSE stream. No front end — the screen that renders this lives on the trading desk. Matching
-// and pricing are library dependencies (JitPack tags), not code that lives here.
+// and pricing are library dependencies (versioned releases on Maven Central), not code that lives here.
 plugins {
     id 'com.damianhoward.kotlin-conventions' version '0.6.0'
     id 'application'
 }
+
+// Applied by id, not in the plugins block: the convention plugin puts the serialization compiler
+// plugin on the build classpath at exactly its Kotlin version, but a single-module build's plugins
+// block resolves ids before that classpath exists, and a version written here could drift from it.
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 
 group = 'com.damianhoward'
 version = '1.0.0'
@@ -24,8 +29,11 @@ dependencies {
     runtimeOnly deps.oracle.jdbc
     // Reads the Autonomous DB's auto-login wallet (cwallet.sso) for mutual TLS.
     runtimeOnly deps.oracle.pki
-    // kafka-clients and Flyway log via slf4j; a binding routes warnings to stderr -> journalctl.
-    runtimeOnly deps.slf4j.simple
+    implementation deps.kotlinx.serialization.json
+    // SLF4J for this service's own logging, which kafka-clients and Flyway already speak; Logback
+    // writes it to stdout for journald, at the level logback.xml sets.
+    implementation deps.slf4j.api
+    runtimeOnly deps.logback.classic
 
     testImplementation deps.hamcrest
     // Real-broker and real-database integration tests; run in CI, skipped where Docker is absent.

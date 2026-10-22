@@ -9,6 +9,8 @@ import com.damianhoward.positionledger.position.Inconclusive
 import com.damianhoward.positionledger.position.Reconciliation
 import com.damianhoward.positionledger.position.ReconciliationChecker
 import com.damianhoward.positionledger.position.View
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.time.Clock
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
@@ -138,12 +140,19 @@ class Readiness(
 
     fun probe(): Probe {
         val now = snapshot()
-        val json =
-            """{"ready":${now.ready},"consumers":{${now.consumers.joinToString(",") { consumerJson(it) }}},""" +
-                """"database":{"ok":${now.databaseOk}},"views":${viewsJson(now.views)},""" +
-                """"ledger":${ledgerJson(now.ledger)},""" +
-                """"deadLetters":{"published":${now.deadLettersPublished},"failed":${now.deadLettersFailed}}}"""
-        return Probe(now.ready, json)
+        val body =
+            ProbeBody(
+                ready = now.ready,
+                consumers =
+                    now.consumers.associate {
+                        it.name to ConsumerBody(it.ok, it.threadAlive, it.assigned, it.pollAgeMillis, it.fatal)
+                    },
+                database = DatabaseBody(now.databaseOk),
+                views = with(now.views) { ViewsBody(ok, positionsOffset, exposureOffset, coherent, incoherentForMillis) },
+                ledger = ledgerBody(now.ledger),
+                deadLetters = DeadLettersBody(now.deadLettersPublished, now.deadLettersFailed),
+            )
+        return Probe(now.ready, Json.encodeToString(body))
     }
 
     /**
@@ -189,25 +198,27 @@ class Readiness(
         )
     }
 
-    private fun ledgerJson(state: LedgerState): String {
-        val views = state.views.joinToString(",") { """${quote(it.view.label)}:${viewLedgerJson(it)}""" }
-        return """{"ok":${state.ok},"checkedAgeMillis":${state.ageMillis ?: "null"},"views":{$views}}"""
-    }
-
-    private fun viewLedgerJson(state: ViewLedgerState): String {
-        val divergences =
-            state.divergences.joinToString(",") {
-                """{"symbol":${quote(it.symbol)},"ledgerQuantity":${it.ledgerQuantity},""" +
-                    """"viewQuantity":${it.viewQuantity},"difference":${it.difference}}"""
-            }
-        val inconclusive =
-            state.inconclusive?.let {
-                """{"viewOffset":${it.viewOffset ?: "null"},"ledgerOffset":${it.ledgerOffset ?: "null"},""" +
-                    """"forMillis":${state.inconclusiveForMillis ?: "null"}}"""
-            } ?: "null"
-        return """{"ok":${state.ok},"symbolsChecked":${state.symbolsChecked},""" +
-            """"divergences":[$divergences],"inconclusive":$inconclusive}"""
-    }
+    private fun ledgerBody(state: LedgerState): LedgerBody =
+        LedgerBody(
+            ok = state.ok,
+            checkedAgeMillis = state.ageMillis,
+            views =
+                state.views.associate { view ->
+                    view.view.label to
+                        ViewLedgerBody(
+                            ok = view.ok,
+                            symbolsChecked = view.symbolsChecked,
+                            divergences =
+                                view.divergences.map {
+                                    DivergenceBody(it.symbol, it.ledgerQuantity, it.viewQuantity, it.difference)
+                                },
+                            inconclusive =
+                                view.inconclusive?.let {
+                                    InconclusiveBody(it.viewOffset, it.ledgerOffset, view.inconclusiveForMillis)
+                                },
+                        )
+                },
+        )
 
     private fun viewsState(report: ExposureReport?): ViewsState {
         val positions = positionsView()?.offset
@@ -230,11 +241,6 @@ class Readiness(
         )
     }
 
-    private fun viewsJson(state: ViewsState): String =
-        """{"ok":${state.ok},"positionsOffset":${state.positionsOffset ?: "null"},""" +
-            """"exposureOffset":${state.exposureOffset ?: "null"},"coherent":${state.coherent},""" +
-            """"incoherentForMillis":${state.incoherentForMillis ?: "null"}}"""
-
     private fun consumerState(health: ConsumerHealth): ConsumerState {
         val pollAge = health.pollAgeMillis()
         val polling = pollAge != null && pollAge <= maxPollAge.toMillis()
@@ -247,11 +253,6 @@ class Readiness(
             fatal = health.fatal,
         )
     }
-
-    private fun consumerJson(state: ConsumerState): String =
-        """"${state.name}":{"ok":${state.ok},"threadAlive":${state.threadAlive},""" +
-            """"assigned":${state.assigned},"pollAgeMillis":${state.pollAgeMillis ?: "null"},""" +
-            """"fatal":${state.fatal?.let { quote(it) } ?: "null"}}"""
 
     /**
      * The same snapshot in Prometheus text format, for trend and post-incident reconstruction.
@@ -418,8 +419,6 @@ class Readiness(
     // exponential notation — Prometheus accepts it, humans reading a curl do not.
     private fun seconds(millis: Long): String = "%d.%03d".format(millis / 1000, millis % 1000)
 
-    private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-
     companion object {
         private val MAX_POLL_AGE: Duration = Duration.ofSeconds(30)
         private val COHERENCE_GRACE: Duration = Duration.ofSeconds(30)
@@ -435,3 +434,77 @@ class Readiness(
         private val INCONCLUSIVE_GRACE: Duration = ReconciliationChecker.INTERVAL.multipliedBy(3)
     }
 }
+
+/*
+ * The /readyz body. Property order is the order the uptime monitor and operators have always read;
+ * no property has a default, so an absent value is written as an explicit null, as it was before.
+ * Properties are private: these classes are only ever written, and the serializer reads the fields.
+ */
+@Serializable
+private class ProbeBody(
+    private val ready: Boolean,
+    private val consumers: Map<String, ConsumerBody>,
+    private val database: DatabaseBody,
+    private val views: ViewsBody,
+    private val ledger: LedgerBody,
+    private val deadLetters: DeadLettersBody,
+)
+
+@Serializable
+private class ConsumerBody(
+    private val ok: Boolean,
+    private val threadAlive: Boolean,
+    private val assigned: Boolean,
+    private val pollAgeMillis: Long?,
+    private val fatal: String?,
+)
+
+@Serializable
+private class DatabaseBody(
+    private val ok: Boolean,
+)
+
+@Serializable
+private class ViewsBody(
+    private val ok: Boolean,
+    private val positionsOffset: Long?,
+    private val exposureOffset: Long?,
+    private val coherent: Boolean,
+    private val incoherentForMillis: Long?,
+)
+
+@Serializable
+private class LedgerBody(
+    private val ok: Boolean,
+    private val checkedAgeMillis: Long?,
+    private val views: Map<String, ViewLedgerBody>,
+)
+
+@Serializable
+private class ViewLedgerBody(
+    private val ok: Boolean,
+    private val symbolsChecked: Int,
+    private val divergences: List<DivergenceBody>,
+    private val inconclusive: InconclusiveBody?,
+)
+
+@Serializable
+private class DivergenceBody(
+    private val symbol: String,
+    private val ledgerQuantity: Long,
+    private val viewQuantity: Long,
+    private val difference: Long,
+)
+
+@Serializable
+private class InconclusiveBody(
+    private val viewOffset: Long?,
+    private val ledgerOffset: Long?,
+    private val forMillis: Long?,
+)
+
+@Serializable
+private class DeadLettersBody(
+    private val published: Long,
+    private val failed: Long,
+)

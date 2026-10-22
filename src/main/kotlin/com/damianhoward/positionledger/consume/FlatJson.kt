@@ -1,5 +1,8 @@
 package com.damianhoward.positionledger.consume
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.math.BigDecimal
 
 /**
@@ -7,19 +10,19 @@ import java.math.BigDecimal
  * no nesting, no arrays. Strict — anything outside that shape, a missing field, or a
  * wrongly-typed field throws [IllegalArgumentException], which the consumer maps to the
  * dead-letter topic rather than a retry (malformed input never heals).
+ *
+ * The text is read by kotlinx.serialization, so every standard JSON escape is understood: the
+ * producer now encodes the same way, and a field carrying a newline must not be dead-lettered.
+ * The one rule this does not enforce is a duplicated key, where the parser keeps the last value;
+ * the producer is an encoder that cannot write one.
  */
 internal class FlatJson private constructor(
-    private val fields: Map<String, Value>,
+    private val fields: Map<String, JsonPrimitive>,
 ) {
-    private data class Value(
-        val text: String,
-        val isString: Boolean,
-    )
-
     fun string(name: String): String {
         val value = field(name)
-        require(value.isString) { "$name must be a JSON string, got ${value.text}" }
-        return value.text
+        require(value.isString) { "$name must be a JSON string, got ${value.content}" }
+        return value.content
     }
 
     /** The field as a JSON string, or null when absent — for additive optional fields. */
@@ -28,7 +31,7 @@ internal class FlatJson private constructor(
     fun long(name: String): Long {
         val value = field(name)
         require(!value.isString) { "$name must be a JSON number, got a string" }
-        return value.text.toLongOrNull() ?: throw IllegalArgumentException("$name is not an integer: ${value.text}")
+        return value.content.toLongOrNull() ?: throw IllegalArgumentException("$name is not an integer: ${value.content}")
     }
 
     /** A decimal carried as a JSON string — the egress emits prices this way to keep them exact. */
@@ -39,99 +42,24 @@ internal class FlatJson private constructor(
             throw IllegalArgumentException("$name is not a decimal: ${string(name)}")
         }
 
-    private fun field(name: String): Value = fields[name] ?: throw IllegalArgumentException("missing field: $name")
+    private fun field(name: String): JsonPrimitive = fields[name] ?: throw IllegalArgumentException("missing field: $name")
 
     companion object {
+        // Plain integers and decimals only: no exponent, no booleans, no null.
+        private val NUMBER = Regex("-?\\d+(\\.\\d+)?")
+
+        /** @throws IllegalArgumentException for anything that is not one flat object of strings and numbers */
         fun parse(json: String): FlatJson {
-            val parser = Parser(json)
-            val fields = parser.readObject()
-            parser.expectEnd()
-            return FlatJson(fields)
-        }
-    }
-
-    private class Parser(
-        private val text: String,
-    ) {
-        private var at = 0
-
-        fun readObject(): Map<String, Value> {
-            expect('{')
-            val fields = mutableMapOf<String, Value>()
-            skipWhitespace()
-            if (peek() == '}') {
-                at++
-                return fields
-            }
-            while (true) {
-                val name = readString()
-                expect(':')
-                require(fields.put(name, readValue()) == null) { "duplicate field: $name" }
-                skipWhitespace()
-                when (val c = next()) {
-                    ',' -> skipWhitespace()
-                    '}' -> return fields
-                    else -> fail("expected ',' or '}', got '$c'")
-                }
-            }
-        }
-
-        fun expectEnd() {
-            skipWhitespace()
-            require(at == text.length) { "trailing content after object: '${text.substring(at)}'" }
-        }
-
-        private fun readValue(): Value {
-            skipWhitespace()
-            return if (peek() == '"') {
-                Value(readString(), isString = true)
-            } else {
-                val start = at
-                while (at < text.length && text[at] !in ",}" && !text[at].isWhitespace()) at++
-                val raw = text.substring(start, at)
-                require(raw.isNotEmpty() && NUMBER.matches(raw)) { "unsupported value: '$raw'" }
-                Value(raw, isString = false)
-            }
-        }
-
-        // The egress escapes only backslash and quote; anything else after '\' is malformed.
-        private fun readString(): String {
-            skipWhitespace()
-            expect('"')
-            val out = StringBuilder()
-            while (true) {
-                when (val c = next()) {
-                    '"' -> return out.toString()
-                    '\\' ->
-                        when (val escaped = next()) {
-                            '"', '\\' -> out.append(escaped)
-                            else -> fail("unsupported escape: '\\$escaped'")
-                        }
-                    else -> out.append(c)
-                }
-            }
-        }
-
-        private fun expect(c: Char) {
-            skipWhitespace()
-            if (next() != c) fail("expected '$c'")
-        }
-
-        private fun peek(): Char {
-            if (at >= text.length) fail("unexpected end of input")
-            return text[at]
-        }
-
-        private fun next(): Char = peek().also { at++ }
-
-        private fun skipWhitespace() {
-            while (at < text.length && text[at].isWhitespace()) at++
-        }
-
-        private fun fail(message: String): Nothing = throw IllegalArgumentException("$message at index $at")
-
-        companion object {
-            private val NUMBER = Regex("-?\\d+(\\.\\d+)?")
+            // A malformed document throws SerializationException, itself an IllegalArgumentException.
+            val root = Json.parseToJsonElement(json) as? JsonObject ?: throw IllegalArgumentException("expected a JSON object")
+            return FlatJson(
+                root.mapValues { (name, value) ->
+                    require(value is JsonPrimitive && (value.isString || NUMBER.matches(value.content))) {
+                        "unsupported value for $name: $value"
+                    }
+                    value
+                },
+            )
         }
     }
 }

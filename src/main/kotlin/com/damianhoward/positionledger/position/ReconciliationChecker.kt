@@ -1,5 +1,6 @@
 package com.damianhoward.positionledger.position
 
+import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 
@@ -55,8 +56,7 @@ class ReconciliationChecker(
             val views = inMemoryViews.mapValues { (_, totals) -> totals() }
             latest = Reconciliation.of(ledger, views, clock.millis())
         } catch (e: Exception) {
-            System.err.println("view reconciliation failed:")
-            e.printStackTrace()
+            log.error("View reconciliation failed", e)
         }
     }
 
@@ -78,3 +78,5 @@ class ReconciliationChecker(
         val MAX_AGE: Duration = Duration.ofMinutes(5)
     }
 }
+
+private val log = LoggerFactory.getLogger(ReconciliationChecker::class.java)
