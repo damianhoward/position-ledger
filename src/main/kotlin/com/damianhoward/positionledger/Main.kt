@@ -7,6 +7,7 @@ import com.damianhoward.positionledger.consume.ConsumerProgress
 import com.damianhoward.positionledger.consume.DeadLetterPublisher
 import com.damianhoward.positionledger.consume.DltReplay
 import com.damianhoward.positionledger.consume.FillConsumer
+import com.damianhoward.positionledger.consume.FillExport
 import com.damianhoward.positionledger.consume.RetryingHandler
 import com.damianhoward.positionledger.exposure.BreachDetector
 import com.damianhoward.positionledger.exposure.RiskLimits
@@ -53,6 +54,15 @@ fun main(args: Array<String>) {
             summary.stillMalformed,
             config.deadLetterTopic,
         )
+        return
+    }
+
+    // Reads the ledger and writes nothing to it, so it runs before Flyway and never migrates the
+    // schema it exports from.
+    if (args.firstOrNull() == "export-fills") {
+        val target = requireNotNull(args.getOrNull(1)) { "usage: position-ledger export-fills <target-topic>" }
+        val store = JdbcPositionStore { DriverManager.getConnection(config.dbUrl, config.dbUser, config.dbPassword) }
+        FillExport.create(config, { store.loadLedger(config.fillsTopic).fills }, target).use { it.run() }
         return
     }
 
