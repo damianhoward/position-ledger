@@ -23,6 +23,9 @@ class ProcessMetricsTest {
         private val poolType: MemoryType,
         private val peak: Long,
         private val collection: MemoryUsage?,
+        private val name: String = "stub",
+        private val used: Long = 1,
+        private val max: Long = 1,
     ) : MemoryPoolMXBean {
         override fun getType() = poolType
 
@@ -30,9 +33,9 @@ class ProcessMetricsTest {
 
         override fun getCollectionUsage() = collection
 
-        override fun getName() = "stub"
+        override fun getName() = name
 
-        override fun getUsage() = MemoryUsage(0, 1, 1, 1)
+        override fun getUsage() = MemoryUsage(0, used, used, max)
 
         override fun isValid() = true
 
@@ -157,6 +160,52 @@ class ProcessMetricsTest {
                 .map { it.split(' ')[2] }
                 .toList()
         assertEquals(names.size, names.toSet().size, names.toString())
+    }
+
+    @Test
+    fun `the code cache is summed across its segments, beside its ceiling`() {
+        // Segmented, as every unit runs it: profiled and non-profiled nmethods plus the non-nmethod
+        // heap. Metaspace is non-heap too and must not be counted.
+        val metrics =
+            metricsWith(
+                listOf(
+                    Pool(MemoryType.HEAP, peak = 100, collection = usage(30)),
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeHeap 'profiled nmethods'", used = 7, max = 60),
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeHeap 'non-profiled nmethods'", used = 5, max = 60),
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeHeap 'non-nmethods'", used = 1, max = 8),
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "Metaspace", used = 900, max = -1),
+                ),
+            )
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_used_bytes 13"), metrics)
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_max_bytes 128"), metrics)
+    }
+
+    @Test
+    fun `an unsegmented code cache is read from its single pool`() {
+        val metrics =
+            metricsWith(listOf(Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeCache", used = 9, max = 128)))
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_used_bytes 9"), metrics)
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_max_bytes 128"), metrics)
+    }
+
+    @Test
+    fun `a code cache ceiling that is undefined is absent, not under-counted`() {
+        val metrics =
+            metricsWith(
+                listOf(
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeHeap 'profiled nmethods'", used = 7, max = 60),
+                    Pool(MemoryType.NON_HEAP, peak = 0, collection = null, name = "CodeHeap 'non-nmethods'", used = 1, max = -1),
+                ),
+            )
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_used_bytes 8"), metrics)
+        assertFalse(metrics.contains("position_ledger_jvm_code_cache_max_bytes"), metrics)
+    }
+
+    @Test
+    fun `a running JVM reports its code cache`() {
+        val metrics = ProcessMetrics().render()
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_used_bytes "), metrics)
+        assertTrue(metrics.contains("position_ledger_jvm_code_cache_max_bytes "), metrics)
     }
 
     private fun valueOf(
