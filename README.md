@@ -100,6 +100,16 @@ payload keeps its `execId`, so the ledger recognises a second replay of the same
 duplicate — replay is idempotent for any record carrying the id. Only pre-`execId` records need
 the older discipline: replay once, then verify the desk's position and dead-letter counts.
 
+### Exporting the ledger
+
+`position-ledger export-fills <topic>` publishes every fill in the ledger to `<topic>` as the
+records orderbook emits, in ledger order and keyed by symbol, so another ledger can be rebuilt
+from them. The broker deletes its oldest fills under retention, which makes the ledger the only
+complete copy: a rebuild from the topic alone recovers a partial book, and a rebuild from an
+export recovers all of it. It reads and never writes, and it refuses to export onto the topic the
+ledger came from, because each copy lands at new coordinates and a pre-`execId` fill would apply
+twice.
+
 The fill schema is orderbook's versioned egress JSON (`v`, `execId`, `symbol`, `price`, `size`,
 `makerOrderId`, `takerOrderId`, `aggressor`, `ts`), parsed strictly — an unknown schema version
 or a wrongly-typed field is poison, not a guess. `execId` is optional: records published before
