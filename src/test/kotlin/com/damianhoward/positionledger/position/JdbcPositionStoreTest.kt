@@ -105,12 +105,30 @@ class JdbcPositionStoreTest {
     }
 
     @Test
-    fun `records without execution ids dedupe by coordinates alone — nulls never collide`() {
+    fun `a record without an execution id takes one from its coordinates, so two such records never collide`() {
         store.record(fill(size = 5), source(1))
         val second = store.record(fill(size = 3, ts = 2000), source(2))
 
-        assertTrue(second is RecordOutcome.Applied, "two null exec_ids must not trip the unique index")
+        assertTrue(second is RecordOutcome.Applied, "distinct coordinates are distinct executions")
         assertEquals(8, store.loadAll().single().quantity)
+        assertEquals(
+            listOf("legacy-orderbook.fills-0-1", "legacy-orderbook.fills-0-2"),
+            store.loadLedger("orderbook.fills").fills.map { it.execId },
+            "the id V5 would have given them, so an exported copy carries it",
+        )
+    }
+
+    @Test
+    fun `an exported copy of an id-less record is recognised wherever it lands`() {
+        // The recovery drill's redelivery case. The original arrives without an id and is given
+        // one from its coordinates; the export writes that id into the copy, which lands on another
+        // topic at other coordinates and must still be the same execution.
+        store.record(fill(size = 5), source(1))
+        val exported = store.loadLedger("orderbook.fills").fills.single()
+        val copy = store.record(exported, FillSource("orderbook.fills.archive", 0, 0))
+
+        assertTrue(copy is RecordOutcome.Duplicate, "got $copy")
+        assertEquals(5, store.loadAll().single().quantity, "one execution, one application")
     }
 
     @Test

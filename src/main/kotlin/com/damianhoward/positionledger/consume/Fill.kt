@@ -11,7 +11,14 @@ data class FillSource(
     val topic: String,
     val partition: Int,
     val offset: Long,
-)
+) {
+    /**
+     * The execution identity of a record that arrived without one: the coordinates it was first
+     * recorded at, the same string migration V5 gave every fill recorded before the producer stamped
+     * an execId. A copy elsewhere then carries it, and the ledger's unique index recognises the copy.
+     */
+    val legacyExecId: String get() = "legacy-$topic-$partition-$offset"
+}
 
 /**
  * One execution off the `orderbook.fills` topic, as orderbook's `KafkaMarketEgress` emits it:

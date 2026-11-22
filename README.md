@@ -103,12 +103,19 @@ the older discipline: replay once, then verify the desk's position and dead-lett
 ### Exporting the ledger
 
 `position-ledger export-fills <topic>` publishes every fill in the ledger to `<topic>` as the
-records orderbook emits, in ledger order and keyed by symbol, so another ledger can be rebuilt
-from them. The broker deletes its oldest fills under retention, which makes the ledger the only
-complete copy: a rebuild from the topic alone recovers a partial book, and a rebuild from an
-export recovers all of it. It reads and never writes, and it refuses to export onto the topic the
-ledger came from, because each copy lands at new coordinates and a pre-`execId` fill would apply
-twice.
+records orderbook emits, in ledger order, so another ledger can be rebuilt from them. The broker
+deleted its oldest fills under retention before that was switched off, which makes the ledger the
+only complete copy: a rebuild from the topic alone recovers a partial book, and a rebuild from an
+export recovers all of it. It reads and never writes, and refuses to export onto the topic the
+ledger consumes.
+
+Each record is keyed by its `execId`, so a compacted target keeps exactly one record per fill
+however often the export runs, and the target must have a single partition so ledger order holds.
+Every fill has an `execId`: fills recorded before the producer stamped one were given
+`legacy-<topic>-<partition>-<offset>` by migration V5, from the coordinates they were first
+recorded at, and the consumer gives the same id to any record that arrives without one. A copy of
+any fill is therefore recognised wherever it lands, which is what lets a ledger be rebuilt from an
+export and then continue from the live topic without counting the overlap twice.
 
 The fill schema is orderbook's versioned egress JSON (`v`, `execId`, `symbol`, `price`, `size`,
 `makerOrderId`, `takerOrderId`, `aggressor`, `ts`), parsed strictly — an unknown schema version
