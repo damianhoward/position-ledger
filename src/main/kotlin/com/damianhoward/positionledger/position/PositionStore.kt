@@ -93,7 +93,9 @@ class JdbcPositionStore(
                         statement.setLong(7, fill.makerOrderId)
                         statement.setLong(8, fill.takerOrderId)
                         statement.setLong(9, fill.timeMillis)
-                        statement.setString(10, fill.execId)
+                        // Never null: exec_id is NOT NULL since V5, and a record without an id is
+                        // given the one V5 would have given it, from its coordinates.
+                        statement.setString(10, fill.execId ?: source.legacyExecId)
                         statement.executeUpdate()
                     }
                 } catch (e: SQLIntegrityConstraintViolationException) {

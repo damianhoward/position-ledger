@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * One-shot operator tool (`position-ledger export-fills <topic>`): publishes the ledger's fills to
- * [targetTopic] as the records orderbook's egress emits, in ledger order and keyed by symbol as the
- * producer keys them, so another ledger can be rebuilt from them.
+ * [targetTopic] as the records orderbook's egress emits, in ledger order, so another ledger can be
+ * rebuilt from them.
  *
  * It exists because the stream alone cannot rebuild this ledger. The broker deletes the oldest
  * fills under retention, so the ledger is the only complete copy, and a recovery that can only
@@ -24,10 +24,15 @@ import java.util.concurrent.TimeUnit
  * stream to start from, and the recovery drill does exactly that: export, rebuild a second ledger
  * in a schema of its own, and compare it with this one.
  *
- * **It refuses to export onto [sourceTopic].** Every exported record lands at new stream
- * coordinates, so the ledger's coordinate key cannot recognise it. The `exec_id` index does, for
- * each fill carrying one; a fill recorded before execution ids existed carries none and would be
- * applied a second time. Exporting onto the live topic would double those fills in the live book.
+ * Each record is keyed by its execId, so a compacted target -- the archive a lost database is rebuilt
+ * from -- keeps exactly one record per fill however many times the export runs. Keyed by symbol,
+ * compaction would keep only each symbol's latest fill. The target must therefore have a single
+ * partition, so ledger order holds whatever the key, and every fill must carry an execId, which
+ * every fill does since migration V5.
+ *
+ * **It refuses to export onto [sourceTopic].** A copy there would land at new coordinates of the
+ * very topic the ledger consumes. The execId index would recognise it, but a live topic carrying two
+ * records of one fill is a defect waiting for anything that reads the stream without the ledger.
  *
  * Every send is confirmed before the next, and a failed send aborts the run.
  */
@@ -41,26 +46,29 @@ class FillExport(
 ) : AutoCloseable {
     init {
         require(targetTopic != sourceTopic) {
-            "refusing to export onto $sourceTopic: each copy lands at new coordinates, and a fill without an execId would apply twice"
+            "refusing to export onto $sourceTopic, the topic the ledger consumes"
         }
     }
 
-    /** What one run did: [exported] records sent, of which [withoutExecId] carried no execution id. */
+    /** What one run did: [exported] records sent. */
     data class Summary(
         val exported: Int,
-        val withoutExecId: Int,
     )
 
     fun run(): Summary {
+        val partitions = producer.partitionsFor(targetTopic).size
+        check(partitions == 1) { "refusing to export to $targetTopic: it has $partitions partitions, and ledger order holds only on one" }
         var exported = 0
-        var withoutExecId = 0
         for (fill in fills()) {
-            producer.send(ProducerRecord(targetTopic, fill.symbol, envelope(fill))).get(confirmTimeout.toMillis(), TimeUnit.MILLISECONDS)
+            val execId =
+                checkNotNull(
+                    fill.execId,
+                ) { "a ${fill.symbol} fill at ${fill.timeMillis} has no execId; every ledger fill has one since V5" }
+            producer.send(ProducerRecord(targetTopic, execId, envelope(fill))).get(confirmTimeout.toMillis(), TimeUnit.MILLISECONDS)
             exported++
-            if (fill.execId == null) withoutExecId++
         }
-        log("exported $exported fill(s) from the $sourceTopic ledger to $targetTopic; $withoutExecId without an execId")
-        return Summary(exported, withoutExecId)
+        log("exported $exported fill(s) from the $sourceTopic ledger to $targetTopic")
+        return Summary(exported)
     }
 
     override fun close() = producer.close(CLOSE_TIMEOUT)

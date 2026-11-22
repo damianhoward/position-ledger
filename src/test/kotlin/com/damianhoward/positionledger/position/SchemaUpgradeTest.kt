@@ -32,6 +32,13 @@ class SchemaUpgradeTest {
         /** The version deployed before the one under test — the state a real upgrade starts from. */
         private val PREVIOUS = MigrationVersion.fromVersion("3")
 
+        /**
+         * V4 itself. The tests below are about what V4 did to rows already present, so they stop
+         * there: V5 later gives those same rows an identity, which LegacyExecutionIdUpgradeTest
+         * covers, and migrating past V4 here would test V5 under V4's name.
+         */
+        private val V4 = MigrationVersion.fromVersion("4")
+
         @Container
         @JvmField
         val oracle: org.testcontainers.oracle.OracleContainer =
@@ -120,12 +127,13 @@ class SchemaUpgradeTest {
 
     @Test
     fun `existing rows survive the upgrade with the new column null, not defaulted`() {
-        // Null is the correct value: these records predate the producer stamping an execution id,
-        // and inventing one would make them look deduplicable by an identity they never carried.
+        // Null was V4's answer: these records predate the producer stamping an execution id, and V4
+        // gave them none. V5 later derives one from the coordinates they were already deduplicated
+        // by, which is an identity they did carry, made portable.
         startFromPreviousVersion()
         insertPreUpgradeFill(offset = 1)
 
-        flyway(null).migrate()
+        flyway(V4).migrate()
 
         assertNull(query("SELECT exec_id FROM fills").single().single())
     }
@@ -138,7 +146,7 @@ class SchemaUpgradeTest {
         startFromPreviousVersion()
         (1L..14L).forEach(::insertPreUpgradeFill)
 
-        flyway(null).migrate()
+        flyway(V4).migrate()
 
         assertEquals(
             14,
