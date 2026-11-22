@@ -43,6 +43,10 @@ class ProcessMetrics(
     // is to be compared against -Xmx.
     private val heapPools = pools.filter { it.type == MemoryType.HEAP }
 
+    // The code cache's pools: one per segment when it is segmented, a single "CodeCache" when not.
+    private val codeCachePools =
+        pools.filter { it.type == MemoryType.NON_HEAP && (it.name.startsWith("CodeHeap") || it.name == "CodeCache") }
+
     fun render(): String {
         val out = StringBuilder()
 
@@ -130,6 +134,16 @@ class ProcessMetrics(
 
         gauge("${PREFIX}jvm_threads", "Live threads, daemon and non-daemon.", threads.threadCount)
 
+        // The code cache, which the deployment caps. The JIT fills it for days after a start before it
+        // levels off, and a full one stops compilation with nothing but a log line to say so: the
+        // service keeps serving, slower. Used beside the ceiling shows how close that is.
+        codeCacheUsed()?.let {
+            gauge("${PREFIX}jvm_code_cache_used_bytes", "Compiled code the JIT holds, summed across code cache pools.", it)
+        }
+        codeCacheMax()?.let {
+            gauge("${PREFIX}jvm_code_cache_max_bytes", "The code cache's ceiling, summed across code cache pools.", it)
+        }
+
         // The collector names come from the JVM's own configuration, so the label set is fixed at
         // startup — bounded by configuration rather than by data, which is the rule that keeps a
         // series from being minted per observation.
@@ -148,6 +162,17 @@ class ProcessMetrics(
 
         return out.toString()
     }
+
+    // Null rather than a partial sum: a pool whose ceiling is undefined reports -1, and adding it in
+    // would publish a ceiling lower than the one that applies.
+    private fun codeCacheUsed(): Long? = codeCachePools.ifEmpty { null }?.sumOf { it.usage.used }
+
+    private fun codeCacheMax(): Long? =
+        codeCachePools
+            .ifEmpty { null }
+            ?.map { it.usage.max }
+            ?.takeIf { maxes -> maxes.all { it >= 0 } }
+            ?.sum()
 
     // Null rather than zero when there are no heap pools to ask. A JVM always has some, so this is
     // the substituted-bean case in a test rather than anything a live process does — but a summed
