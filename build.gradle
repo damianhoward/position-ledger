@@ -4,6 +4,7 @@
 // and pricing are library dependencies (versioned releases on Maven Central), not code that lives here.
 plugins {
     id 'com.damianhoward.kotlin-conventions' version '0.7.0'
+    id 'com.damianhoward.runtime-image' version '0.7.0'
     id 'application'
 }
 
@@ -47,3 +48,11 @@ dependencies {
 // excluded. The rest — consumer loop, retry/DLT, positions, persistence, risk adapter, web —
 // is exercised by tests and counted.
 coverageExcludes = ['**/positionledger/MainKt.class']
+
+// The release carries its own runtime (build-conventions' runtime-image), which the launcher prefers
+// over the unit's JAVA_HOME. The service migrates its database and joins the broker before it
+// listens, so CI cannot start it; the deploy's health gate, which requires both, is its first start
+// on the image.
+runtimeImage {
+    startsInCi = false
+}
